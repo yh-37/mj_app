@@ -1,0 +1,14 @@
+# Data files
+*.csv
+score.json
+score_filled.json
+score_updated.json
+
+# Python
+app.py
+__pycache__/
+*.pyc
+
+# Misc
+*.resolved
+.gemini/
