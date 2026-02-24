@@ -121,18 +121,22 @@ total_games = len(df_player)
 total_score = df_player["score"].sum()
 avg_score = df_player["score"].mean()
 top_rate = (df_player["rank"] == 1).sum() / total_games * 100
+last4_rate = (df_player["rank"] == 4).sum() / total_games * 100
 avg_rank = df_player["rank"].mean()
 
-k1, k2, k3, k4, k5 = st.columns(5)
+k1, k2, k3, k4, k5, k6 = st.columns(6)
 k1.metric("対局数", f"{total_games} 局")
 k2.metric("累計スコア", f"{total_score:+.0f} pt")
 k3.metric("1局平均", f"{avg_score:+.1f} pt")
 k4.metric("トップ率", f"{top_rate:.1f} %")
-k5.metric("平均順位", f"{avg_rank:.2f}")
+k5.metric("ラス率", f"{last4_rate:.1f} %")
+k6.metric("平均順位", f"{avg_rank:.2f}")
 
 st.divider()
 
-# ── Cumulative trend + Rank donut ────────────────────────────
+# ══════════════════════════════════════════════════════════════
+# 📈 累計スコア推移 + 🏆 順位分布（棒グラフ）
+# ══════════════════════════════════════════════════════════════
 col_left, col_right = st.columns([3, 2])
 
 with col_left:
@@ -152,7 +156,6 @@ with col_left:
     )
     fig_trend.update_traces(marker=dict(size=6), line=dict(width=2.5))
     fig_trend.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
-    # Fill area
     fig_trend.add_scatter(
         x=df_player_sorted["game_idx"],
         y=df_player_sorted["cumulative"],
@@ -173,24 +176,181 @@ with col_left:
 
 with col_right:
     st.subheader("🏆 順位分布")
-    rank_counts = df_player["rank"].value_counts().sort_index()
-    rank_labels = {1: "1位", 2: "2位", 3: "3位", 4: "4位"}
-    rank_colors = ["#fbbf24", "#94a3b8", "#b45309", "#ef4444"]
-    fig_rank = go.Figure(go.Pie(
-        labels=[rank_labels.get(r, str(r)) for r in rank_counts.index],
-        values=rank_counts.values,
-        hole=0.55,
-        marker=dict(colors=[rank_colors[i - 1] for i in rank_counts.index]),
-        textinfo="label+percent",
-        hovertemplate="%{label}: %{value} 回<extra></extra>",
+    rank_counts = df_player["rank"].value_counts().sort_index().reset_index()
+    rank_counts.columns = ["順位", "回数"]
+    rank_counts["順位ラベル"] = rank_counts["順位"].map({1: "1位", 2: "2位", 3: "3位", 4: "4位"})
+    rank_counts["率"] = rank_counts["回数"] / total_games * 100
+    rank_colors_map = {1: "#fbbf24", 2: "#94a3b8", 3: "#b45309", 4: "#ef4444"}
+    rank_counts["color"] = rank_counts["順位"].map(rank_colors_map)
+
+    fig_rank = go.Figure(go.Bar(
+        x=rank_counts["順位ラベル"],
+        y=rank_counts["回数"],
+        text=[f"{r:.0f}回<br>({p:.1f}%)" for r, p in zip(rank_counts["回数"], rank_counts["率"])],
+        textposition="outside",
+        marker_color=rank_counts["color"].tolist(),
+        hovertemplate="%{x}: %{y} 回<extra></extra>",
     ))
     fig_rank.update_layout(
         height=340,
         showlegend=False,
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(showgrid=False),
+        yaxis=dict(gridcolor="rgba(100,100,100,0.15)", title="回数"),
+        uniformtext_minsize=10,
+        uniformtext_mode="hide",
     )
     st.plotly_chart(fig_rank, use_container_width=True)
+
+st.divider()
+
+# ══════════════════════════════════════════════════════════════
+# 📅 月別スコア推移
+# ══════════════════════════════════════════════════════════════
+st.subheader("📅 月別スコア推移")
+
+df_monthly = df_player.copy()
+df_monthly["month"] = df_monthly["date"].dt.to_period("M").astype(str)
+monthly_agg = (
+    df_monthly.groupby("month")
+    .agg(
+        合計スコア=("score", "sum"),
+        対局数=("score", "count"),
+        平均スコア=("score", "mean"),
+        トップ率=("rank", lambda x: (x == 1).sum() / len(x) * 100),
+    )
+    .reset_index()
+    .rename(columns={"month": "月"})
+)
+
+fig_monthly = go.Figure()
+fig_monthly.add_trace(go.Bar(
+    x=monthly_agg["月"],
+    y=monthly_agg["合計スコア"],
+    marker_color=[("#22c55e" if v >= 0 else "#ef4444") for v in monthly_agg["合計スコア"]],
+    text=[f"{v:+.0f}" for v in monthly_agg["合計スコア"]],
+    textposition="outside",
+    hovertemplate="<b>%{x}</b><br>合計: %{y:+.0f} pt<br>対局数: %{customdata[0]}<br>平均: %{customdata[1]:+.1f} pt<extra></extra>",
+    customdata=monthly_agg[["対局数", "平均スコア"]].values,
+))
+fig_monthly.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
+fig_monthly.update_layout(
+    height=320,
+    plot_bgcolor="rgba(0,0,0,0)",
+    paper_bgcolor="rgba(0,0,0,0)",
+    xaxis=dict(showgrid=False, title="月"),
+    yaxis=dict(gridcolor="rgba(100,100,100,0.15)", title="合計スコア (pt)"),
+    showlegend=False,
+)
+st.plotly_chart(fig_monthly, use_container_width=True)
+
+st.divider()
+
+# ══════════════════════════════════════════════════════════════
+# 🎲 順位別スコア分布 (Box plot)
+# ══════════════════════════════════════════════════════════════
+st.subheader("🎲 順位別スコア分布")
+
+rank_label_map = {1: "1位 🥇", 2: "2位 🥈", 3: "3位 🥉", 4: "4位 💀"}
+rank_color_list = ["#fbbf24", "#94a3b8", "#b45309", "#ef4444"]
+
+fig_box = go.Figure()
+for i, r in enumerate([1, 2, 3, 4]):
+    subset = df_player[df_player["rank"] == r]["score"]
+    if subset.empty:
+        continue
+    fig_box.add_trace(go.Box(
+        y=subset,
+        name=rank_label_map[r],
+        marker_color=rank_color_list[i],
+        boxmean="sd",
+        hovertemplate=f"<b>{rank_label_map[r]}</b><br>スコア: %{{y:+.0f}} pt<extra></extra>",
+    ))
+fig_box.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
+fig_box.update_layout(
+    height=340,
+    plot_bgcolor="rgba(0,0,0,0)",
+    paper_bgcolor="rgba(0,0,0,0)",
+    xaxis=dict(showgrid=False),
+    yaxis=dict(gridcolor="rgba(100,100,100,0.15)", title="スコア (pt)"),
+    showlegend=False,
+)
+st.plotly_chart(fig_box, use_container_width=True)
+st.caption("各順位でのスコア分布。中央線=中央値、×=平均値、ひげ=標準偏差範囲")
+
+st.divider()
+
+# ══════════════════════════════════════════════════════════════
+# 🕐 直近20局の順位推移
+# ══════════════════════════════════════════════════════════════
+st.subheader("🕐 直近20局の順位推移")
+
+df_recent = df_player.sort_values(["date", "match"]).tail(20).copy()
+df_recent["game_idx"] = range(1, len(df_recent) + 1)
+df_recent["date_str"] = df_recent["date"].dt.strftime("%m/%d")
+rank_bar_colors = {1: "#fbbf24", 2: "#94a3b8", 3: "#b45309", 4: "#ef4444"}
+df_recent["bar_color"] = df_recent["rank"].map(rank_bar_colors)
+
+col_recent_l, col_recent_r = st.columns([2, 1])
+
+with col_recent_l:
+    fig_recent = go.Figure()
+    fig_recent.add_trace(go.Bar(
+        x=df_recent["game_idx"],
+        y=df_recent["rank"],
+        marker_color=df_recent["bar_color"].tolist(),
+        text=df_recent["rank"].astype(str) + "位",
+        textposition="inside",
+        insidetextanchor="middle",
+        hovertemplate="<b>%{customdata[0]}</b> 局%{customdata[1]}<br>順位: %{y}位<br>スコア: %{customdata[2]:+.0f} pt<extra></extra>",
+        customdata=df_recent[["date_str", "match", "score"]].values,
+    ))
+    fig_recent.add_hline(
+        y=df_recent["rank"].mean(),
+        line_dash="dot", line_color="#a78bfa",
+        annotation_text=f"期間平均 {df_recent['rank'].mean():.2f}",
+        annotation_position="top right",
+    )
+    fig_recent.update_layout(
+        height=300,
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(showgrid=False, title="直近対局 (古→新)", dtick=1),
+        yaxis=dict(
+            gridcolor="rgba(100,100,100,0.15)",
+            title="順位",
+            range=[0, 4.8],
+            tickvals=[1, 2, 3, 4],
+            ticktext=["1位", "2位", "3位", "4位"],
+        ),
+        showlegend=False,
+    )
+    st.plotly_chart(fig_recent, use_container_width=True)
+
+with col_recent_r:
+    recent_ranks = df_recent["rank"].tolist()
+    consecutive_top = 0
+    consecutive_last = 0
+    for r in reversed(recent_ranks):
+        if r == 1:
+            consecutive_top += 1
+        else:
+            break
+    for r in reversed(recent_ranks):
+        if r == 4:
+            consecutive_last += 1
+        else:
+            break
+
+    st.metric("直近トップ率", f"{(df_recent['rank'] == 1).sum() / len(df_recent) * 100:.1f} %")
+    st.metric("直近ラス率", f"{(df_recent['rank'] == 4).sum() / len(df_recent) * 100:.1f} %")
+    st.metric("直近平均順位", f"{df_recent['rank'].mean():.2f}")
+    st.metric("直近平均スコア", f"{df_recent['score'].mean():+.1f} pt")
+    if consecutive_top > 1:
+        st.success(f"🔥 連続トップ: {consecutive_top} 連続")
+    if consecutive_last > 1:
+        st.error(f"💀 連続ラス: {consecutive_last} 連続")
 
 st.divider()
 
