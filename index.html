@@ -677,9 +677,13 @@
             currentPoints: {},
             editingIndex: null,
             scoreMult: parseFloat(localStorage.getItem('mj-mult-s') || '1'),
-            chipMult: parseFloat(localStorage.getItem('mj-mult-c') || '1')
+            chipMult: parseFloat(localStorage.getItem('mj-mult-c') || '1'),
+            scoreRate: parseFloat(localStorage.getItem('mj-rate-s') || '100'),
+            chipRate: parseFloat(localStorage.getItem('mj-rate-c') || '100'),
+            totalPlayers: parseInt(localStorage.getItem('mj-total-players') || '6'),
+            baseFee: parseFloat(localStorage.getItem('mj-base-fee') || '0')
         };
-        state.activePlayers = state.members.slice(0, 4);
+        state.activePlayers = state.members.slice(0, state.totalPlayers);
 
         function save() {
             localStorage.setItem('mj-members', JSON.stringify(state.members));
@@ -688,6 +692,10 @@
             localStorage.setItem('mj-archives-v5', JSON.stringify(state.archives));
             localStorage.setItem('mj-mult-s', state.scoreMult);
             localStorage.setItem('mj-mult-c', state.chipMult);
+            localStorage.setItem('mj-rate-s', state.scoreRate);
+            localStorage.setItem('mj-rate-c', state.chipRate);
+            localStorage.setItem('mj-total-players', state.totalPlayers);
+            localStorage.setItem('mj-base-fee', state.baseFee);
         }
 
         /* ── UI Transitions ── */
@@ -771,7 +779,7 @@
         }
 
         function renderGame() {
-            // Uma
+            // Uma bar
             const umaCont = document.getElementById('uma-container');
             umaCont.innerHTML = `<div class="uma-bar"><span class="uma-label">Uma</span><div class="uma-chips" id="uma-list"></div></div>`;
             for (let i = 1; i <= state.gameMode; i++) {
@@ -781,17 +789,43 @@
                 umaCont.querySelector('#uma-list').appendChild(chip);
             }
 
-            // Panel
+            // Rate bar
             const panelCont = document.getElementById('main-panel-container');
             panelCont.innerHTML = `
+                <!-- Rate Bar -->
+                <div class="uma-bar" style="gap:12px;">
+                    <span class="uma-label" style="white-space:nowrap">Rate</span>
+                    <div class="uma-chip" style="gap:4px">
+                        <span style="font-size:9px;color:var(--slate-400);white-space:nowrap">スコア</span>
+                        <input type="number" style="width:52px;color:var(--emerald-700);font-weight:700;font-size:13px;background:transparent;border:none;outline:none;text-align:center;" value="${state.scoreRate}" onchange="state.scoreRate=parseFloat(this.value)||0;save();if(state.history.length>0)renderHistoryTable();">
+                        <span style="font-size:9px;color:var(--slate-400);white-space:nowrap">円/点</span>
+                    </div>
+                    <div class="uma-chip" style="gap:4px">
+                        <span style="font-size:9px;color:var(--slate-400);white-space:nowrap">チップ</span>
+                        <input type="number" style="width:52px;color:#7c3aed;font-weight:700;font-size:13px;background:transparent;border:none;outline:none;text-align:center;" value="${state.chipRate}" onchange="state.chipRate=parseFloat(this.value)||0;save();if(state.history.length>0)renderHistoryTable();">
+                        <span style="font-size:9px;color:var(--slate-400);white-space:nowrap">円/枚</span>
+                    </div>
+                </div>
+
+                <!-- Entry Panel -->
                 <div class="panel">
-                    <div class="panel-header">
+                    <div class="panel-header" style="margin-bottom:12px">
                         <span class="panel-title">${state.editingIndex !== null ? 'EDIT ROUND' : 'ENTRY'}</span>
                         <div style="display:flex;gap:4px">
                             <button class="tab-btn ${state.gameMode == 3 ? 'active' : ''}" onclick="state.gameMode=3;render()">3麻</button>
                             <button class="tab-btn ${state.gameMode == 4 ? 'active' : ''}" onclick="state.gameMode=4;render()">4麻</button>
                         </div>
                     </div>
+
+                    <!-- 参加人数セレクター -->
+                    ${state.editingIndex === null ? `
+                    <div style="display:flex;align-items:center;gap:8px;background:var(--slate-50);border-radius:16px;padding:8px 12px;border:1px solid var(--slate-100);margin-bottom:16px;">
+                        <span style="font-size:10px;font-weight:900;color:var(--slate-400);text-transform:uppercase;letter-spacing:1px;white-space:nowrap">参加人数:</span>
+                        <div style="display:flex;gap:6px">
+                            ${[4,5,6].map(n => `<button onclick="setTotalPlayers(${n})" style="width:36px;height:36px;border-radius:12px;border:${state.totalPlayers===n?'none':'1px solid var(--slate-200)'};background:${state.totalPlayers===n?'var(--emerald-600)':'#fff'};color:${state.totalPlayers===n?'#fff':'var(--slate-400)'};font-size:11px;font-weight:900;cursor:pointer;">${n}人</button>`).join('')}
+                        </div>
+                    </div>` : ''}
+
                     <div class="player-list" id="p-list"></div>
                     <button class="btn-confirm" ${state.activePlayers.length != state.gameMode ? 'disabled' : ''} onclick="calculateScore()">
                         ${state.editingIndex !== null ? 'UPDATE' : 'CONFIRM ROUND'}
@@ -801,12 +835,14 @@
             const plist = panelCont.querySelector('#p-list');
             state.members.forEach((name, i) => {
                 const active = state.activePlayers.includes(name);
+                const disabled = i >= state.totalPlayers;
                 const row = document.createElement('div');
-                row.className = `player-row ${active ? 'active' : 'inactive'}`;
+                row.className = `player-row ${disabled ? 'inactive' : active ? 'active' : 'inactive'}`;
+                if (disabled) row.style.opacity = '0.15';
                 row.innerHTML = `
-                    <button class="tab-btn active" style="width:30px;padding:8px" onclick="togglePlayer('${name}')">${active ? '✔' : '+'}</button>
-                    <input class="player-name" value="${name}" onchange="renamePlayer(${i}, this.value)">
-                    <input type="number" class="player-score" placeholder="0" ${!active ? 'disabled' : ''} value="${state.currentPoints[name] || ''}" oninput="state.currentPoints['${name}']=this.value">
+                    <button class="tab-btn ${active && !disabled ? 'active' : ''}" style="width:30px;padding:8px" ${disabled ? 'disabled' : ''} onclick="${disabled ? '' : `togglePlayer('${name}')`}">${active && !disabled ? '✔' : '+'}</button>
+                    <input class="player-name" value="${name}" ${disabled ? 'disabled' : ''} onchange="renamePlayer(${i}, this.value)">
+                    <input type="number" class="player-score" placeholder="0" ${!active || disabled ? 'disabled' : ''} value="${state.currentPoints[name] || ''}" oninput="state.currentPoints['${name}']=this.value">
                 `;
                 plist.appendChild(row);
             });
@@ -817,52 +853,142 @@
 
         function renderHistoryTable() {
             const cont = document.getElementById('history-container');
+            const feePerPerson = (state.baseFee > 0 && state.totalPlayers > 0)
+                ? Math.ceil(state.baseFee / state.totalPlayers) : 0;
+
             cont.innerHTML = `
                 <div class="summary-panel">
-                    <table class="final-table" style="color:#fff">
-                        <thead id="h-head"></thead>
-                        <tbody id="h-body"></tbody>
-                    </table>
+                    <!-- スコア表（横スクロール対応） -->
+                    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
+                        <table class="final-table" style="color:#fff;min-width:${Math.max(280, 90 + state.history.length * 56 + 72)}px">
+                            <thead id="h-head"></thead>
+                            <tbody id="h-body"></tbody>
+                        </table>
+                    </div>
+
+                    <!-- チップ入力 -->
                     <div style="margin-top:20px; border-top:1px solid rgba(255,255,255,0.1); padding-top:16px;">
                         <div style="font-size:10px; font-weight:900; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:2px; margin-bottom:12px;">Chip Input</div>
                         <div id="chip-input-container" style="display:grid; grid-template-columns:repeat(2, 1fr); gap:10px;"></div>
                     </div>
-                    <button class="btn-save-session" onclick="archiveSession()">FINALIZE & SAVE SESSION</button>
+
+                    <!-- 場代入力 -->
+                    <div style="margin-top:16px;border-top:1px solid rgba(255,255,255,0.1);padding-top:16px;">
+                        <div style="display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.05);border-radius:12px;padding:10px 14px;">
+                            <span style="font-size:10px;font-weight:900;color:#fbbf24;white-space:nowrap;">🏠 場代</span>
+                            <input type="number" placeholder="0" value="${state.baseFee || ''}" min="0"
+                                style="width:88px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:8px;color:#fcd34d;text-align:center;font-family:'JetBrains Mono';font-size:13px;font-weight:700;outline:none;padding:4px 8px;"
+                                oninput="state.baseFee=parseFloat(this.value)||0;save();renderHistoryTable();">
+                            <span style="font-size:10px;color:rgba(255,255,255,0.4);">円 ÷ ${state.totalPlayers}人</span>
+                            ${feePerPerson > 0 ? `<span style="font-size:12px;font-weight:900;color:#fbbf24;font-family:'JetBrains Mono';margin-left:auto;">= ${feePerPerson.toLocaleString()}円/人</span>` : ''}
+                        </div>
+                    </div>
+
+                    <!-- 最終金額 -->
+                    <div style="margin-top:16px;border-top:1px solid rgba(255,255,255,0.1);padding-top:16px;">
+                        <div style="font-size:10px;font-weight:900;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:2px;margin-bottom:12px;">💴 Final Amount</div>
+                        <div id="final-amount-container"></div>
+                    </div>
+
+                    <button class="btn-save-session" onclick="archiveSession()">FINALIZE &amp; SAVE SESSION</button>
                 </div>
             `;
 
+            // Head row（Player列を sticky に）
             const head = cont.querySelector('#h-head');
             const thr = document.createElement('tr');
-            thr.appendChild(el('th', { style: 'text-align:left' }, 'Player'));
-            state.history.forEach((_, i) => thr.appendChild(el('th', { onclick: `editRound(${i})` }, `#${i + 1}`)));
-            thr.appendChild(el('th', {}, 'TOTAL'));
+            const thPlayer = document.createElement('th');
+            thPlayer.style.cssText = 'text-align:left;position:sticky;left:0;background:#0f172a;z-index:1;min-width:72px;padding-right:4px;';
+            thPlayer.textContent = 'Player';
+            thr.appendChild(thPlayer);
+            state.history.forEach((_, i) => {
+                const th = document.createElement('th');
+                th.style.cssText = 'min-width:52px;cursor:pointer;';
+                th.textContent = `#${i + 1}`;
+                th.onclick = () => editRound(i);
+                thr.appendChild(th);
+            });
+            thr.appendChild(el('th', { style: 'background:rgba(255,255,255,0.1);min-width:64px' }, 'TOTAL'));
             head.appendChild(thr);
 
             const body = cont.querySelector('#h-body');
             state.members.forEach(name => {
                 const tr = document.createElement('tr');
-                tr.appendChild(el('td', {}, name));
+                const tdName = document.createElement('td');
+                tdName.style.cssText = 'position:sticky;left:0;background:#0f172a;z-index:1;font-weight:700;min-width:72px;padding-right:4px;';
+                tdName.textContent = name;
+                tr.appendChild(tdName);
                 let total = 0;
                 state.history.forEach(round => {
                     const s = (round.find(r => r.name === name) || {}).finalScore || 0;
                     total += s;
-                    tr.appendChild(el('td', { style: s > 0 ? 'color:var(--orange-400)' : s < 0 ? 'color:var(--blue-400)' : 'opacity:0.3' }, s.toFixed(1)));
+                    tr.appendChild(el('td', { style: (s > 0 ? 'color:var(--orange-400)' : s < 0 ? 'color:var(--blue-400)' : 'opacity:0.3') + ';min-width:52px' }, s.toFixed(1)));
                 });
-                tr.appendChild(el('td', { style: 'font-weight:900;background:rgba(255,255,255,0.1)' }, total.toFixed(1)));
+                tr.appendChild(el('td', { style: 'font-weight:900;background:rgba(255,255,255,0.1);min-width:64px' }, total.toFixed(1)));
                 body.appendChild(tr);
             });
 
-            // Chip Inputs
+            // Chip Inputs（totalPlayers人分のみ）
             const chipCont = cont.querySelector('#chip-input-container');
-            state.members.forEach(name => {
+            state.members.slice(0, state.totalPlayers).forEach(name => {
                 const item = document.createElement('div');
                 item.style.cssText = 'background:rgba(255,255,255,0.05); padding:10px; border-radius:12px; display:flex; align-items:center; gap:8px;';
                 item.innerHTML = `
                     <span style="font-size:11px; flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${name}</span>
-                    <input type="number" class="chip-field" data-name="${name}" placeholder="0" style="width:50px; background:transparent; border:none; border-bottom:1px solid rgba(255,255,255,0.2); color:#fff; text-align:right; font-family:\'JetBrains Mono\'; font-size:14px; outline:none;" value="${state.chips[name] || ''}" oninput="state.chips['${name}']=Number(this.value)">
+                    <input type="number" class="chip-field" data-name="${name}" placeholder="0"
+                        style="width:50px; background:transparent; border:none; border-bottom:1px solid rgba(255,255,255,0.2); color:#c4b5fd; text-align:right; font-family:'JetBrains Mono'; font-size:14px; outline:none;"
+                        value="${state.chips[name] || ''}"
+                        oninput="state.chips['${name}']=Number(this.value);renderFinalAmounts();">
                 `;
                 chipCont.appendChild(item);
             });
+
+            renderFinalAmounts();
+        }
+
+        function renderFinalAmounts() {
+            const cont = document.getElementById('final-amount-container');
+            if (!cont) return;
+            const feePerPerson = (state.baseFee > 0 && state.totalPlayers > 0)
+                ? Math.ceil(state.baseFee / state.totalPlayers) : 0;
+            cont.innerHTML = '';
+            state.members.slice(0, state.totalPlayers).forEach(name => {
+                const total = state.history.reduce((s, r) => s + ((r.find(p => p.name === name) || {}).finalScore || 0), 0);
+                const chip = Number(state.chips[name] || 0);
+                const finalAmt = total * state.scoreRate + chip * state.chipRate;
+                const netAmt = finalAmt - feePerPerson;
+                const row = document.createElement('div');
+                row.style.cssText = 'padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.06);';
+                row.innerHTML = `
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span style="font-size:12px;font-weight:700;color:rgba(255,255,255,0.8);width:56px;flex-shrink:0;">${name}</span>
+                        <div style="flex:1;text-align:right;">
+                            <div style="font-size:9px;color:rgba(255,255,255,0.35);font-family:'JetBrains Mono';">
+                                ${total > 0 ? '+' : ''}${total.toFixed(1)}pt × ${state.scoreRate}${chip !== 0 ? ` + ${chip}枚 × ${state.chipRate}` : ''}
+                            </div>
+                            <div style="font-size:13px;font-weight:900;font-family:'JetBrains Mono';color:${finalAmt >= 0 ? 'var(--orange-400)' : 'var(--blue-400)'}">
+                                ${finalAmt >= 0 ? '+' : ''}${Math.round(finalAmt).toLocaleString()}円
+                            </div>
+                        </div>
+                    </div>
+                    ${feePerPerson > 0 ? `
+                    <div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:4px;">
+                        <span style="font-size:9px;color:rgba(255,255,255,0.3);font-family:'JetBrains Mono';">場代 -${feePerPerson.toLocaleString()}円</span>
+                        <div style="font-size:15px;font-weight:900;font-family:'JetBrains Mono';padding:2px 10px;border-radius:8px;background:${netAmt >= 0 ? 'rgba(251,146,60,0.12)' : 'rgba(96,165,250,0.12)'};color:${netAmt >= 0 ? 'var(--orange-400)' : 'var(--blue-400)'}">
+                            ${netAmt >= 0 ? '+' : ''}${Math.round(netAmt).toLocaleString()}円
+                        </div>
+                    </div>` : ''}
+                `;
+                cont.appendChild(row);
+            });
+        }
+
+        function setTotalPlayers(n) {
+            state.totalPlayers = n;
+            // Remove active players beyond limit
+            state.activePlayers = state.activePlayers.filter((_, i) => i < n);
+            save();
+            render();
         }
 
         function renderStats() {
